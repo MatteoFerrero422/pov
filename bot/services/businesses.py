@@ -97,23 +97,21 @@ def business_level_data(info, level):
 
 
 def business_income_per_minute(info, level):
-    """Return money production per minute.
-
-    BUSINESS_LEVELS and stall rates are configured as $/hour.
-    The economy engine needs $/minute for elapsed-time calculations, so
-    conversion happens in exactly one place.
-    """
+    """Доход бизнеса в $ за одну минуту."""
     data = business_level_data(info, level)
     if not data:
         return D('0')
-    return D(str(data['income_money'])) / D('60')
+
+    return D(str(data['income_money']))
 
 
 def business_stars_per_minute(info, level):
+    """Доход бизнеса в ⭐ за одну минуту."""
     data = business_level_data(info, level)
     if not data:
         return D('0')
-    return D(str(data['income_stars'])) / D('60')
+
+    return D(str(data['income_stars']))
 
 
 def business_production(info, level):
