@@ -103,6 +103,32 @@ CREATE TABLE IF NOT EXISTS case_inventory (
     star_cases INTEGER NOT NULL DEFAULT 0 CHECK (star_cases >= 0)
 );
 
+CREATE TABLE IF NOT EXISTS promos (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    reward_type TEXT NOT NULL CHECK (reward_type IN ('money', 'stars')),
+    reward_amount BIGINT NOT NULL CHECK (reward_amount > 0),
+    max_uses BIGINT,
+    used_count BIGINT NOT NULL DEFAULT 0 CHECK (used_count >= 0),
+    expires_at TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS promo_activations (
+    id BIGSERIAL PRIMARY KEY,
+    promo_id BIGINT NOT NULL REFERENCES promos(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    activated_at TEXT NOT NULL,
+    UNIQUE (promo_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_promos_code
+    ON promos(code);
+
+CREATE INDEX IF NOT EXISTS idx_promo_activations_user
+    ON promo_activations(user_id);
+
 CREATE TABLE IF NOT EXISTS admin_logs (
     id BIGSERIAL PRIMARY KEY,
     admin_user_id BIGINT NOT NULL,
