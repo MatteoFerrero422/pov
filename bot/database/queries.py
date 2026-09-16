@@ -371,6 +371,173 @@ async def consume_money_case(conn, user_id):
     )
     return cur.rowcount == 1
 
+async def add_money_case(conn, user_id, amount=1):
+    await conn.execute(
+        "INSERT INTO case_inventory(user_id,money_cases) VALUES(%s,%s) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "money_cases=case_inventory.money_cases+EXCLUDED.money_cases",
+        (user_id, amount),
+    )
+
+
+async def consume_star_case(conn, user_id):
+    cur = await conn.execute(
+        "UPDATE case_inventory "
+        "SET star_cases=star_cases-1 "
+        "WHERE user_id=%s AND star_cases>0",
+        (user_id,),
+    )
+    return cur.rowcount == 1
+
+
+async def get_promo(conn, code):
+    cur = await conn.execute(
+        "SELECT * FROM promos WHERE LOWER(code)=LOWER(%s)",
+        (code,),
+    )
+    return await cur.fetchone()
+
+
+async def create_promo(
+    conn,
+    code,
+    reward_type,
+    reward_amount,
+    max_uses=None,
+    expires_at=None,
+):
+    cur = await conn.execute(
+        """INSERT INTO promos(
+            code,
+            reward_type,
+            reward_amount,
+            max_uses,
+            expires_at,
+            created_at
+        )
+        VALUES(%s,%s,%s,%s,%s,%s)
+        RETURNING *""",
+        (
+            code,
+            reward_type,
+            reward_amount,
+            max_uses,
+            expires_at,
+            _now(),
+        ),
+    )
+
+    return await cur.fetchone()
+
+
+async def promo_already_activated(conn, promo_id, user_id):
+    cur = await conn.execute(
+        "SELECT 1 FROM promo_activations "
+        "WHERE promo_id=%s AND user_id=%s",
+        (promo_id, user_id),
+    )
+
+    return await cur.fetchone() is not None
+
+
+async def activate_promo(conn, user_id, code):
+    promo = await get_promo(conn, code)
+
+    if not promo:
+        return None, "not_found"
+
+    if await promo_already_activated(
+        conn,
+        promo["id"],
+        user_id,
+    ):
+        return None, "already_used"
+
+    now = datetime.now(timezone.utc)
+
+    if not promo["active"]:
+        return None, "inactive"
+
+    if promo["expires_at"] and _parse_dt(
+        promo["expires_at"]
+    ) <= now:
+        return None, "expired"
+
+    if (
+        promo["max_uses"] is not None
+        and promo["used_count"] >= promo["max_uses"]
+    ):
+        return None, "limit"
+
+    cur = await conn.execute(
+        """UPDATE promos
+        SET used_count=used_count+1
+        WHERE id=%s
+          AND active=TRUE
+          AND (
+              expires_at IS NULL
+              OR expires_at > %s
+          )
+          AND (
+              max_uses IS NULL
+              OR used_count < max_uses
+          )
+        RETURNING *""",
+        (
+            promo["id"],
+            now.isoformat(),
+        ),
+    )
+
+    claimed = await cur.fetchone()
+
+    if not claimed:
+        return None, "limit"
+
+    cur = await conn.execute(
+        """INSERT INTO promo_activations(
+            promo_id,
+            user_id,
+            activated_at
+        )
+        VALUES(%s,%s,%s)
+        ON CONFLICT DO NOTHING
+        RETURNING id""",
+        (
+            promo["id"],
+            user_id,
+            _now(),
+        ),
+    )
+
+    activation = await cur.fetchone()
+
+    if not activation:
+        await conn.execute(
+            "UPDATE promos "
+            "SET used_count=GREATEST(used_count-1,0) "
+            "WHERE id=%s",
+            (promo["id"],),
+        )
+
+        return None, "already_used"
+
+    if claimed["reward_type"] == "money":
+        await update_user_money(
+            conn,
+            user_id,
+            claimed["reward_amount"],
+        )
+
+    else:
+        await update_user_stars(
+            conn,
+            user_id,
+            claimed["reward_amount"],
+        )
+
+    return claimed, "ok"
+
 
 async def add_stall_income(conn, user_id, amount):
     await conn.execute("UPDATE users SET stall_income=stall_income+%s WHERE id=%s", (amount, user_id))
